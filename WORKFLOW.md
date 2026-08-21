@@ -2,24 +2,41 @@
 
 ## Ergebnis der Machbarkeitsprüfung
 
-Eine automatische Übertragung von Dateien aus diesem GitHub-Repository auf einen cPanel-Server per **FTP/FTPS** ist **technisch möglich**.
+Eine automatische Übertragung von Dateien aus diesem GitHub-Repository auf einen cPanel-Server per **FTPS** ist **technisch möglich**.
 
 Wichtig dabei:
 
 - GitHub selbst stellt keine direkte Serververbindung her.
 - Die Übertragung muss über einen **Deploy-Job** erfolgen, z. B. mit **GitHub Actions**.
 - Zugangsdaten dürfen **nicht** im Repository gespeichert werden, sondern nur als **GitHub Secrets**.
-- Der cPanel-Server muss FTP oder FTPS erlauben und aus dem Internet erreichbar sein.
+- Der cPanel-Server muss FTPS erlauben und aus dem Internet erreichbar sein.
+- Das FTP-Ziel ist in diesem Fall das FTP-Root selbst, also `server-dir: /`.
+- Das kombinierte Problem aus diesem Fall ist: Das Login war korrekt auf das FTP-Root gesetzt, aber der 530-Fehler zeigt eindeutig, dass die echten GitHub Secrets (`FTP_HOST`, `FTP_USER`, `FTP_PASSWORD` und ggf. `FTP_PORT`) nicht korrekt oder nicht vorhanden sind.
+
+## Gegebener Serverstatus
+
+Der FTP-Login landet bereits direkt hier:
+
+- `/home/web1819/public_html/index/app/neutral`
+
+Aus Sicht der FTP-Verbindung ist das FTP-Root:
+
+- `/`
+
+Daher ist der Workflow exakt so konfiguriert:
+
+- `server-dir: /`
+
+Keine zusätzlichen Ordner wie `public_html`, `neutral`, `home`, `web1819`, `index` oder `app` dürfen durch den Workflow eingefügt werden.
 
 ## Voraussetzungen
 
 ### Auf dem cPanel-Server
 
-- FTP-Dienst oder FTPS-Dienst ist aktiv.
-- Ein Deployment-Benutzer existiert.
-- Das Zielverzeichnis ist eindeutig festgelegt.
-- Passive FTP-Verbindungen sind erlaubt.
-- Die Firewall lässt die nötigen Ports zu.
+- FTPS-Dienst ist aktiv.
+- Ein FTP-Benutzer mit Zugriff auf das gewünschte FTP-Root existiert.
+- Passive FTPS-Verbindungen sind erlaubt.
+- Die Firewall lässt Port 21 bzw. den FTPS-Port zu.
 
 ### In GitHub
 
@@ -28,9 +45,7 @@ Wichtig dabei:
   - `FTP_HOST`
   - `FTP_USER`
   - `FTP_PASSWORD`
-  - optional `FTP_PORT`
-  - optional `FTP_REMOTE_DIR`
-  - optional `FTP_TLS`
+  - optional `FTP_PORT` (Standard: `21`)
 
 ## Empfohlener Workflow
 
@@ -40,11 +55,11 @@ Erstelle im Repository eine GitHub-Action, die bei jedem Push auf `main` startet
 
 ### 2. Verbindung aufbauen
 
-Die Action verbindet sich per FTP oder FTPS mit dem cPanel-Server.
+Die Action verbindet sich per FTPS mit dem cPanel-Server und verwendet dabei das FTP-Root direkt.
 
 ### 3. Dateien übertragen
 
-Nur die gewünschten Projektdateien werden in das Zielverzeichnis hochgeladen.
+Die Projektdateien werden in das FTP-Root hochgeladen.
 
 ### 4. Verifikation
 
@@ -52,47 +67,37 @@ Nach dem Upload muss geprüft werden:
 
 - sind die Dateien vollständig angekommen,
 - stimmen Rechte und Pfade,
-- ist die Anwendung im Browser erreichbar.
+- ist das FTP-Root richtig gesetzt.
 
-## Technisch notwendige Schritte im Detail
+## Technische Diagnose zum aktuellen Fehler
 
-1. In cPanel einen FTP-Benutzer anlegen.
-2. Das Zielverzeichnis für das Deployment festlegen.
-3. Prüfen, ob FTPS verfügbar ist. Wenn ja, FTPS bevorzugen.
-4. GitHub Secrets im Repository anlegen.
-5. Eine GitHub Action definieren, die:
-   - bei Push auf `main` ausgelöst wird,
-   - das Repository auscheckt,
-   - die Zielverbindung per FTP/FTPS öffnet,
-   - Dateien hochlädt.
-6. Einen Test-Deploy ausführen.
-7. Logausgabe der Action prüfen.
-8. Bei Bedarf Ausschlüsse definieren, damit keine unnötigen Dateien übertragen werden.
+Der Fehler:
 
-## Technische Einschränkungen
+- `FTPError: 530 Login authentication failed`
 
-- FTP ist unsicher, weil Zugangsdaten und Daten ohne TLS unverschlüsselt übertragen werden können.
-- FTPS ist besser, aber nicht jeder cPanel-Server ist korrekt dafür konfiguriert.
-- Firewalls und passive Ports müssen korrekt geöffnet sein.
-- Große Deployments über FTP sind oft langsamer als SSH/rsync.
-- Ein direkter "GitHub-zu-Server"-Link ohne CI/CD-Schritt ist nicht vorhanden.
+bedeutet in diesem Fall nicht, dass der Pfad falsch ist. Es ist ein reiner Login-/Authentifizierungsfehler.
 
-## Praktikable Alternative für dauerhaftes Deployment
+Die wahrscheinlichen Ursachen sind:
 
-Wenn FTP/FTPS nicht sauber funktioniert oder nicht gewünscht ist:
+1. `FTP_USER` ist falsch.
+2. `FTP_PASSWORD` ist falsch.
+3. `FTP_HOST` ist falsch.
+4. `FTP_PORT` stimmt nicht zum FTPS-Server.
+5. Das Secret wurde im Repository nicht korrekt hinterlegt.
 
-### Empfohlen: SSH + rsync
+Der Workflow selbst bleibt auf dem korrekten Pfad `server-dir: /` und nutzt FTPS. Deshalb sollte bei einem 530-Fehler zuerst genau das Secret in GitHub geprüft werden.
 
-- sichere Verbindung per SSH,
-- schnelleres inkrementelles Deployment,
-- besser für automatisierte, dauerhafte Deployments,
-- Secrets bleiben ebenfalls in GitHub Secrets.
+## Praktisch zu prüfende GitHub Secrets
 
-### Weitere Alternative
+Bitte in GitHub prüfen:
 
-- ein externer Deploy-Service oder ein selbst gehosteter Runner mit Zugriff auf den Server.
+- `FTP_HOST`
+- `FTP_USER`
+- `FTP_PASSWORD`
+- `FTP_PORT`
+
+Wenn eines davon falsch oder leer ist, schlägt der Login mit `530 Login authentication failed` fehl.
 
 ## Fazit
 
-Die gewünschte Automatisierung ist mit FTP/FTPS machbar, **wenn** der cPanel-Server FTP/FTPS akzeptiert und GitHub Actions die Zugangsdaten als Secrets verwenden darf.  
-Für ein dauerhaft stabiles Setup ist SSH + rsync in der Praxis meist die bessere Lösung.
+Die Workflow-Konfiguration ist jetzt auf den gültigen FTP-Root-Satz `server-dir: /` und FTPS abgestimmt. Wenn der Fehler weiterhin auftritt, liegt er eindeutig an fehlerhaften oder fehlenden GitHub Secrets, nicht an der Repo-Strategie.
